@@ -4,8 +4,8 @@ from aiogram.utils import executor
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # Забираем токен из настроек сервера для безопасности
-API_TOKEN = os.getenv('8923328373:AAGUNQWKNU5XJ36gSvk7HfOfLSJqaLJcHws')
-SMARTLINK = os.getenv('https://simal.top/click?o=3&a=1325&sub_id1=2026PIN')
+API_TOKEN = os.getenv('BOT_TOKEN')
+SMARTLINK = os.getenv('SMARTLINK_URL')
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)

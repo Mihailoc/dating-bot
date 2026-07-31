@@ -9,9 +9,6 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 API_TOKEN = os.getenv('BOT_TOKEN')
 SMARTLINK = os.getenv('SMARTLINK_URL')
 
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
-
 TEXTS = {
     'en': {
         'welcome': "Hey there! 👋\nWelcome to **MatchFinder**.\n\nLet’s find real local guys near you in under 30 seconds.\n🔒 *100% Anonymous & Free*",
@@ -33,65 +30,81 @@ TEXTS = {
     }
 }
 
-@dp.message(Command("start"))
-async def send_welcome(message: types.Message):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🇺🇸 English", callback_data="lang_en"),
-         InlineKeyboardButton(text="🇪🇸 Español", callback_data="lang_es")]
-    ])
-    await message.answer("Please select your language / Por favor elige tu idioma:", reply_markup=kb)
+async def process_event(update_dict):
+    bot = Bot(token=API_TOKEN)
+    dp = Dispatcher()
 
-@dp.callback_query(F.data.startswith("lang_"))
-async def process_lang(callback: types.CallbackQuery):
-    lang = callback.data.split('_')[1]
-    t = TEXTS.get(lang, TEXTS['en'])
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=t['btn_start'], callback_data=f"step1_{lang}")]
-    ])
-    await callback.answer()
-    await callback.message.answer(t['welcome'], parse_mode="Markdown", reply_markup=kb)
+    @dp.message(Command("start"))
+    async def send_welcome(message: types.Message):
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🇺🇸 English", callback_data="lang_en"),
+             InlineKeyboardButton(text="🇪🇸 Español", callback_data="lang_es")]
+        ])
+        await message.answer("Please select your language / Por favor elige tu idioma:", reply_markup=kb)
 
-@dp.callback_query(F.data.startswith("step1_"))
-async def process_step1(callback: types.CallbackQuery):
-    lang = callback.data.split('_')[1]
-    t = TEXTS.get(lang, TEXTS['en'])
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="18-24", callback_data=f"step2_{lang}"),
-         InlineKeyboardButton(text="25-34", callback_data=f"step2_{lang}"),
-         InlineKeyboardButton(text="35+", callback_data=f"step2_{lang}")]
-    ])
-    await callback.answer()
-    await callback.message.answer(t['q_age'], reply_markup=kb)
+    @dp.callback_query(F.data.startswith("lang_"))
+    async def process_lang(callback: types.CallbackQuery):
+        lang = callback.data.split('_')[1]
+        t = TEXTS.get(lang, TEXTS['en'])
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t['btn_start'], callback_data=f"step1_{lang}")]
+        ])
+        await callback.answer()
+        await callback.message.answer(t['welcome'], parse_mode="Markdown", reply_markup=kb)
 
-@dp.callback_query(F.data.startswith("step2_"))
-async def process_step2(callback: types.CallbackQuery):
-    lang = callback.data.split('_')[1]
-    t = TEXTS.get(lang, TEXTS['en'])
-    buttons = [[InlineKeyboardButton(text=goal, callback_data=f"final_{lang}")] for goal in t['goals']]
-    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-    await callback.answer()
-    await callback.message.answer(t['q_goal'], reply_markup=kb)
+    @dp.callback_query(F.data.startswith("step1_"))
+    async def process_step1(callback: types.CallbackQuery):
+        lang = callback.data.split('_')[1]
+        t = TEXTS.get(lang, TEXTS['en'])
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="18-24", callback_data=f"step2_{lang}"),
+             InlineKeyboardButton(text="25-34", callback_data=f"step2_{lang}"),
+             InlineKeyboardButton(text="35+", callback_data=f"step2_{lang}")]
+        ])
+        await callback.answer()
+        await callback.message.answer(t['q_age'], reply_markup=kb)
 
-@dp.callback_query(F.data.startswith("final_"))
-async def process_final(callback: types.CallbackQuery):
-    lang = callback.data.split('_')[1]
-    t = TEXTS.get(lang, TEXTS['en'])
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=t['btn_link'], url=SMARTLINK)]
-    ])
-    await callback.answer()
-    await callback.message.answer(t['searching'], parse_mode="Markdown", reply_markup=kb)
+    @dp.callback_query(F.data.startswith("step2_"))
+    async def process_step2(callback: types.CallbackQuery):
+        lang = callback.data.split('_')[1]
+        t = TEXTS.get(lang, TEXTS['en'])
+        buttons = [[InlineKeyboardButton(text=goal, callback_data=f"final_{lang}")] for goal in t['goals']]
+        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+        await callback.answer()
+        await callback.message.answer(t['q_goal'], reply_markup=kb)
 
-# Обработчик запросов Vercel Serverless
+    @dp.callback_query(F.data.startswith("final_"))
+    async def process_final(callback: types.CallbackQuery):
+        lang = callback.data.split('_')[1]
+        t = TEXTS.get(lang, TEXTS['en'])
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=t['btn_link'], url=SMARTLINK)]
+        ])
+        await callback.answer()
+        await callback.message.answer(t['searching'], parse_mode="Markdown", reply_markup=kb)
+
+    try:
+        update = types.Update.model_validate(update_dict, context={"bot": bot})
+        await dp.feed_update(bot, update)
+    finally:
+        await bot.session.close()
+
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
-        content_length = int(self.headers['Content-Length'])
+        content_length = int(self.headers.get('Content-Length', 0))
         post_data = self.rfile.read(content_length)
-        update_dict = json.loads(post_data.decode('utf-8'))
         
-        update = types.Update(**update_dict)
-        asyncio.run(dp.feed_update(bot, update))
-        
+        if post_data:
+            update_dict = json.loads(post_data.decode('utf-8'))
+            asyncio.run(process_event(update_dict))
+            
         self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
         self.end_headers()
         self.wfile.write(b'ok')
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'Bot is running!')

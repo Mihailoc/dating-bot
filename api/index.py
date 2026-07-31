@@ -1,15 +1,17 @@
 import os
 import json
-from asyncio import run
-from aiogram import Bot, Dispatcher, types
+import asyncio
+from http.server import BaseHTTPRequestHandler
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 API_TOKEN = os.getenv('BOT_TOKEN')
 SMARTLINK = os.getenv('SMARTLINK_URL')
 
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher()
 
-# Мультиязычные тексты
 TEXTS = {
     'en': {
         'welcome': "Hey there! 👋\nWelcome to **MatchFinder**.\n\nLet’s find real local guys near you in under 30 seconds.\n🔒 *100% Anonymous & Free*",
@@ -31,66 +33,64 @@ TEXTS = {
     }
 }
 
-@dp.message_handler(commands=['start'])
+@dp.message(Command("start"))
 async def send_welcome(message: types.Message):
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        types.InlineKeyboardButton("🇺🇸 English", callback_data="lang_en"),
-        types.InlineKeyboardButton("🇪🇸 Español", callback_data="lang_es")
-    )
-    await message.answer("Please select your language / Por favor elige tu idioma:", reply_markup=keyboard)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🇺🇸 English", callback_data="lang_en"),
+         InlineKeyboardButton(text="🇪🇸 Español", callback_data="lang_es")]
+    ])
+    await message.answer("Please select your language / Por favor elige tu idioma:", reply_markup=kb)
 
-@dp.callback_query_handler(lambda c: c.data.startswith('lang_'))
-async def process_lang(callback_query: types.CallbackQuery):
-    lang = callback_query.data.split('_')[1]
+@dp.callback_query(F.data.startswith("lang_"))
+async def process_lang(callback: types.CallbackQuery):
+    lang = callback.data.split('_')[1]
     t = TEXTS.get(lang, TEXTS['en'])
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton(t['btn_start'], callback_data=f"step1_{lang}"))
-    await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(callback_query.from_user.id, t['welcome'], parse_mode="Markdown", reply_markup=keyboard)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t['btn_start'], callback_data=f"step1_{lang}")]
+    ])
+    await callback.answer()
+    await callback.message.answer(t['welcome'], parse_mode="Markdown", reply_markup=kb)
 
-@dp.callback_query_handler(lambda c: c.data.startswith('step1_'))
-async def process_step1(callback_query: types.CallbackQuery):
-    lang = callback_query.data.split('_')[1]
+@dp.callback_query(F.data.startswith("step1_"))
+async def process_step1(callback: types.CallbackQuery):
+    lang = callback.data.split('_')[1]
     t = TEXTS.get(lang, TEXTS['en'])
-    keyboard = types.InlineKeyboardMarkup(row_width=3)
-    keyboard.add(
-        types.InlineKeyboardButton("18-24", callback_data=f"step2_{lang}"),
-        types.InlineKeyboardButton("25-34", callback_data=f"step2_{lang}"),
-        types.InlineKeyboardButton("35+", callback_data=f"step2_{lang}")
-    )
-    await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(callback_query.from_user.id, t['q_age'], reply_markup=keyboard)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="18-24", callback_data=f"step2_{lang}"),
+         InlineKeyboardButton(text="25-34", callback_data=f"step2_{lang}"),
+         InlineKeyboardButton(text="35+", callback_data=f"step2_{lang}")]
+    ])
+    await callback.answer()
+    await callback.message.answer(t['q_age'], reply_markup=kb)
 
-@dp.callback_query_handler(lambda c: c.data.startswith('step2_'))
-async def process_step2(callback_query: types.CallbackQuery):
-    lang = callback_query.data.split('_')[1]
+@dp.callback_query(F.data.startswith("step2_"))
+async def process_step2(callback: types.CallbackQuery):
+    lang = callback.data.split('_')[1]
     t = TEXTS.get(lang, TEXTS['en'])
-    keyboard = types.InlineKeyboardMarkup(row_width=1)
-    for goal in t['goals']:
-        keyboard.add(types.InlineKeyboardButton(goal, callback_data=f"final_{lang}"))
-    await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(callback_query.from_user.id, t['q_goal'], reply_markup=keyboard)
+    buttons = [[InlineKeyboardButton(text=goal, callback_data=f"final_{lang}")] for goal in t['goals']]
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await callback.answer()
+    await callback.message.answer(t['q_goal'], reply_markup=kb)
 
-@dp.callback_query_handler(lambda c: c.data.startswith('final_'))
-async def process_final(callback_query: types.CallbackQuery):
-    lang = callback_query.data.split('_')[1]
+@dp.callback_query(F.data.startswith("final_"))
+async def process_final(callback: types.CallbackQuery):
+    lang = callback.data.split('_')[1]
     t = TEXTS.get(lang, TEXTS['en'])
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton(t['btn_link'], url=SMARTLINK))
-    await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(callback_query.from_user.id, t['searching'], parse_mode="Markdown", reply_markup=keyboard)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t['btn_link'], url=SMARTLINK)]
+    ])
+    await callback.answer()
+    await callback.message.answer(t['searching'], parse_mode="Markdown", reply_markup=kb)
 
-# Точка входа для Vercel (Serverless)
-from http.server import BaseHTTPRequestHandler
-
+# Обработчик запросов Vercel Serverless
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         content_length = int(self.headers['Content-Length'])
         post_data = self.rfile.read(content_length)
-        update = types.Update.de_json(json.loads(post_data.decode('utf-8')))
+        update_dict = json.loads(post_data.decode('utf-8'))
         
-        run(dp.process_update(update))
+        update = types.Update(**update_dict)
+        asyncio.run(dp.feed_update(bot, update))
         
         self.send_response(200)
         self.end_headers()

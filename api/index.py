@@ -1,10 +1,7 @@
 import os
 import json
-import asyncio
+import urllib.request
 from http.server import BaseHTTPRequestHandler
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 API_TOKEN = os.getenv('BOT_TOKEN')
 SMARTLINK = os.getenv('SMARTLINK_URL')
@@ -30,64 +27,14 @@ TEXTS = {
     }
 }
 
-async def process_event(update_dict):
-    bot = Bot(token=API_TOKEN)
-    dp = Dispatcher()
-
-    @dp.message(Command("start"))
-    async def send_welcome(message: types.Message):
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🇺🇸 English", callback_data="lang_en"),
-             InlineKeyboardButton(text="🇪🇸 Español", callback_data="lang_es")]
-        ])
-        await message.answer("Please select your language / Por favor elige tu idioma:", reply_markup=kb)
-
-    @dp.callback_query(F.data.startswith("lang_"))
-    async def process_lang(callback: types.CallbackQuery):
-        lang = callback.data.split('_')[1]
-        t = TEXTS.get(lang, TEXTS['en'])
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=t['btn_start'], callback_data=f"step1_{lang}")]
-        ])
-        await callback.answer()
-        await callback.message.answer(t['welcome'], parse_mode="Markdown", reply_markup=kb)
-
-    @dp.callback_query(F.data.startswith("step1_"))
-    async def process_step1(callback: types.CallbackQuery):
-        lang = callback.data.split('_')[1]
-        t = TEXTS.get(lang, TEXTS['en'])
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="18-24", callback_data=f"step2_{lang}"),
-             InlineKeyboardButton(text="25-34", callback_data=f"step2_{lang}"),
-             InlineKeyboardButton(text="35+", callback_data=f"step2_{lang}")]
-        ])
-        await callback.answer()
-        await callback.message.answer(t['q_age'], reply_markup=kb)
-
-    @dp.callback_query(F.data.startswith("step2_"))
-    async def process_step2(callback: types.CallbackQuery):
-        lang = callback.data.split('_')[1]
-        t = TEXTS.get(lang, TEXTS['en'])
-        buttons = [[InlineKeyboardButton(text=goal, callback_data=f"final_{lang}")] for goal in t['goals']]
-        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-        await callback.answer()
-        await callback.message.answer(t['q_goal'], reply_markup=kb)
-
-    @dp.callback_query(F.data.startswith("final_"))
-    async def process_final(callback: types.CallbackQuery):
-        lang = callback.data.split('_')[1]
-        t = TEXTS.get(lang, TEXTS['en'])
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=t['btn_link'], url=SMARTLINK)]
-        ])
-        await callback.answer()
-        await callback.message.answer(t['searching'], parse_mode="Markdown", reply_markup=kb)
-
+def send_tg(method, payload):
+    url = f"https://api.telegram.org/bot{API_TOKEN}/{method}"
+    data = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
     try:
-        update = types.Update.model_validate(update_dict, context={"bot": bot})
-        await dp.feed_update(bot, update)
-    finally:
-        await bot.session.close()
+        urllib.request.urlopen(req)
+    except Exception as e:
+        print(f"Error TG request: {e}")
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -95,9 +42,91 @@ class handler(BaseHTTPRequestHandler):
         post_data = self.rfile.read(content_length)
         
         if post_data:
-            update_dict = json.loads(post_data.decode('utf-8'))
-            asyncio.run(process_event(update_dict))
+            update = json.loads(post_data.decode('utf-8'))
             
+            # 1. Обработка команды /start
+            if 'message' in update and 'text' in update['message']:
+                chat_id = update['message']['chat']['id']
+                text = update['message']['text']
+                
+                if text.startswith('/start'):
+                    payload = {
+                        'chat_id': chat_id,
+                        'text': "Please select your language / Por favor elige tu idioma:",
+                        'reply_markup': {
+                            'inline_keyboard': [
+                                [
+                                    {'text': "🇺🇸 English", 'callback_data': "lang_en"},
+                                    {'text': "🇪🇸 Español", 'callback_data': "lang_es"}
+                                ]
+                            ]
+                        }
+                    }
+                    send_tg('sendMessage', payload)
+
+            # 2. Обработка нажатий на инлайн-кнопки
+            elif 'callback_query' in update:
+                cb = update['callback_query']
+                cb_id = cb['id']
+                chat_id = cb['message']['chat']['id']
+                data = cb.get('data', '')
+
+                # Подтверждаем получение клика
+                send_tg('answerCallbackQuery', {'callback_query_id': cb_id})
+
+                if data.startswith('lang_'):
+                    lang = data.split('_')[1]
+                    t = TEXTS.get(lang, TEXTS['en'])
+                    payload = {
+                        'chat_id': chat_id,
+                        'text': t['welcome'],
+                        'parse_mode': 'Markdown',
+                        'reply_markup': {
+                            'inline_keyboard': [[{'text': t['btn_start'], 'callback_data': f"step1_{lang}"}]]
+                        }
+                    }
+                    send_tg('sendMessage', payload)
+
+                elif data.startswith('step1_'):
+                    lang = data.split('_')[1]
+                    t = TEXTS.get(lang, TEXTS['en'])
+                    payload = {
+                        'chat_id': chat_id,
+                        'text': t['q_age'],
+                        'reply_markup': {
+                            'inline_keyboard': [[
+                                {'text': "18-24", 'callback_data': f"step2_{lang}"},
+                                {'text': "25-34", 'callback_data': f"step2_{lang}"},
+                                {'text': "35+", 'callback_data': f"step2_{lang}"}
+                            ]]
+                        }
+                    }
+                    send_tg('sendMessage', payload)
+
+                elif data.startswith('step2_'):
+                    lang = data.split('_')[1]
+                    t = TEXTS.get(lang, TEXTS['en'])
+                    buttons = [[{'text': goal, 'callback_data': f"final_{lang}"}] for goal in t['goals']]
+                    payload = {
+                        'chat_id': chat_id,
+                        'text': t['q_goal'],
+                        'reply_markup': {'inline_keyboard': buttons}
+                    }
+                    send_tg('sendMessage', payload)
+
+                elif data.startswith('final_'):
+                    lang = data.split('_')[1]
+                    t = TEXTS.get(lang, TEXTS['en'])
+                    payload = {
+                        'chat_id': chat_id,
+                        'text': t['searching'],
+                        'parse_mode': 'Markdown',
+                        'reply_markup': {
+                            'inline_keyboard': [[{'text': t['btn_link'], 'url': SMARTLINK}]]
+                        }
+                    }
+                    send_tg('sendMessage', payload)
+
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
@@ -107,4 +136,4 @@ class handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
-        self.wfile.write(b'Bot is running!')
+        self.wfile.write(b'OK')
